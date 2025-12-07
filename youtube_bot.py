@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import glob
+import asyncio
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from flask import Flask, request # Import Flask for webhooks
@@ -9,7 +10,7 @@ from flask import Flask, request # Import Flask for webhooks
 # --- CONFIGURATION ---
 # IMPORTANT: Replace '<YOUR_BOT_TOKEN>' with the token you get from @BotFather
 # In the Render setup, you will securely set this via an environment variable.
-BOT_TOKEN = "8255096238:AAEViSpXI0_VsOQ7KqbL2iyqnLDQtq5g7AY" 
+BOT_TOKEN = os.environ.get('BOT_TOKEN', "8255096238:AAEViSpXI0_VsOQ7KqbL2iyqnLDQtq5g7AY")
 
 # Define Webhook URL details
 # The WEBHOOK_PORT is used by the Flask app. Render will set the actual PORT environment variable.
@@ -236,6 +237,17 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     logger.info("Bot configured for Webhook mode. Starting Gunicorn server...")
+
+# Initialize the application when the module is loaded
+async def init_app():
+    """Initialize the Telegram application."""
+    await application.initialize()
+    await application.start()
+
+# Run initialization
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+loop.run_until_complete(init_app())
 
 if __name__ == '__main__':
     main()
