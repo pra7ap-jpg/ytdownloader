@@ -7,6 +7,7 @@ RUN apt-get update && \
     apt-get install -y ffmpeg --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
+RUN pip install --upgrade yt-dlp
 # Set the working directory in the container
 WORKDIR /app
 
@@ -22,3 +23,4 @@ EXPOSE 8080
 
 # Command to run the application using Gunicorn with gevent workers for async support
 CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --worker-class gevent --worker-connections 1000 youtube_bot:app_flask
+
