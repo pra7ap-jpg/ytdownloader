@@ -210,7 +210,8 @@ def webhook_handler():
             update = Update.de_json(request.get_json(force=True), application.bot)
             loop.run_until_complete(application.process_update(update))
             
-            loop.close()
+            # Don't close the loop immediately - let it finish cleanup
+            # loop.close() is removed
             return "", 200
         except Exception as e:
             logger.error(f"Error processing update: {e}", exc_info=True)
