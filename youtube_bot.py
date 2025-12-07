@@ -2,23 +2,17 @@ import logging
 import os
 import subprocess
 import glob
-import asyncio
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from flask import Flask, request # Import Flask for webhooks
+from flask import Flask, request
+import asyncio
 
 # --- CONFIGURATION ---
-# IMPORTANT: Replace '<YOUR_BOT_TOKEN>' with the token you get from @BotFather
-# In the Render setup, you will securely set this via an environment variable.
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8255096238:AAEViSpXI0_VsOQ7KqbL2iyqnLDQtq5g7AY")
-
-# Define Webhook URL details
-# The WEBHOOK_PORT is used by the Flask app. Render will set the actual PORT environment variable.
 WEBHOOK_PORT = int(os.environ.get("PORT", 8080))
-# The WEBHOOK_URL will be provided by Render. We set it later using the Telegram API.
-WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "") 
+WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
-# Set up logging for debugging
+# Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -28,10 +22,12 @@ logger = logging.getLogger(__name__)
 # Initialize Flask app
 app_flask = Flask(__name__)
 
-# Telegram Application Setup (defined globally)
-# Securely retrieve the token from the environment variable set by Render
+# Telegram Application Setup
 actual_token = os.environ.get('BOT_TOKEN', BOT_TOKEN)
 application = Application.builder().token(actual_token).build()
+
+# Flag to track initialization
+_initialized = False
 
 # --- UTILITY FUNCTIONS ---
 
@@ -53,40 +49,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await start(update, context)
 
 def download_youtube_media(url: str, format_spec: str) -> str | None:
-    """
-    Downloads media from a YouTube URL using yt-dlp and reliably returns the file path.
-    """
-    # Use a fixed filename template to prevent issues with long/complex titles
+    """Downloads media from a YouTube URL using yt-dlp."""
     output_template = "downloads/%(id)s.%(ext)s"
     
-    # yt-dlp command structure
     command = [
         "yt-dlp",
         "--output", output_template,
-        "-f", format_spec,  # Format specifier (e.g., 'bestaudio' or 'worstvideo')
-        "--print", "filepath", # Use --print filepath for reliable path output
+        "-f", format_spec,
+        "--print", "filepath",
         url
     ]
     
     try:
-        # Create the downloads directory if it doesn't exist
         os.makedirs("downloads", exist_ok=True)
-        
         logger.info(f"Starting download for URL: {url} with format: {format_spec}")
         
-        # Execute yt-dlp command and capture output
         result = subprocess.run(command, check=True, capture_output=True, text=True)
-        
-        # The file path is reliably printed to stdout via the "--print filepath" argument.
-        # We take the last line, as yt-dlp often prints logs before the final output.
         downloaded_filepath = result.stdout.strip().split('\n')[-1]
         
         if os.path.exists(downloaded_filepath):
             logger.info(f"Successfully downloaded file: {downloaded_filepath}")
             return downloaded_filepath
         else:
-            logger.error(f"Download reported success, but file not found at: {downloaded_filepath}. STDOUT: {result.stdout}")
-            # Fallback: Search the downloads folder for any recently modified file
+            logger.error(f"Download reported success, but file not found at: {downloaded_filepath}")
             files = glob.glob(os.path.join("downloads", "*"))
             if files:
                 return max(files, key=os.path.getmtime)
@@ -110,38 +95,30 @@ async def handle_download_request(update: Update, context: ContextTypes.DEFAULT_
 
     url = context.args[0]
     
-    # Simple URL validation (can be more robust)
     if not ("youtube.com" in url or "youtu.be" in url):
         await update.message.reply_text("That doesn't look like a valid YouTube link. Please send a full YouTube URL.")
         return
 
-    # Set appropriate format and Telegram send method
     if media_type == 'audio':
-        # Best audio quality, converted to opus/m4a for small size
         format_spec = "bestaudio[ext=m4a]" 
         send_method = context.bot.send_audio
         size_limit_warning = "Audio files are generally small and should upload quickly."
-    else: # video
-        # Worst video format for minimum file size (e.g., 360p mp4 combined with best audio)
+    else:
         format_spec = "worstvideo[ext=mp4]+bestaudio/best[ext=mp4]/mp4" 
         send_method = context.bot.send_video
         size_limit_warning = "⚠️ *Warning:* Video files may exceed the 50MB bot limit. If the upload fails, please try the `/audio` command instead."
-
 
     initial_message = await update.message.reply_text(
         f"⏳ Processing the link and downloading the {media_type}... This may take a minute, please wait.\n\n{size_limit_warning}",
         parse_mode='Markdown'
     )
 
-    # 1. Download the file
     file_path = download_youtube_media(url, format_spec)
     
-    # 2. Check and Upload the file
     if file_path and os.path.exists(file_path):
-        file_size = os.path.getsize(file_path) / (1024 * 1024) # Size in MB
+        file_size = os.path.getsize(file_path) / (1024 * 1024)
         
         if file_size > 50:
-            # Handle large file gracefully
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=initial_message.message_id,
@@ -154,11 +131,9 @@ async def handle_download_request(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             try:
-                # Use the appropriate Telegram send method (send_audio or send_video)
                 with open(file_path, 'rb') as media_file:
                     await send_method(
                         chat_id=update.effective_chat.id,
-                        # Pass the file content to the media parameter
                         media=media_file, 
                         caption=f"✅ Download complete! Here is your {media_type} file."
                     )
@@ -172,10 +147,8 @@ async def handle_download_request(update: Update, context: ContextTypes.DEFAULT_
                     parse_mode='Markdown'
                 )
         
-        # 3. Clean up the downloaded file to save disk space (CRITICAL for free hosting)
         os.remove(file_path)
         logger.info(f"Cleaned up file: {file_path}")
-
     else:
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
@@ -195,61 +168,47 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Responds to unknown commands."""
     await update.message.reply_text("Sorry, I don't recognize that command. Use /start or /help to see my functions.")
 
-# --- WEBHOOK SETUP (HTTP Endpoints) ---
+# --- INITIALIZATION FUNCTION ---
+async def ensure_initialized():
+    """Ensure the application is initialized (lazy initialization)."""
+    global _initialized
+    if not _initialized:
+        # Register handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("audio", audio_handler))
+        application.add_handler(CommandHandler("video", video_handler))
+        application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+        
+        # Initialize and start
+        await application.initialize()
+        await application.start()
+        _initialized = True
+        logger.info("Telegram application initialized successfully")
+
+# --- WEBHOOK SETUP ---
 @app_flask.route("/", methods=["GET", "POST"])
-async def webhook_handler():
+def webhook_handler():
     """Handles incoming Telegram updates via Webhook."""
     if request.method == "POST":
-        # Get the update from the request body
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        # Process the update asynchronously
-        await application.process_update(update)
-        return "", 200
+        try:
+            # Create new event loop for this request
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Ensure application is initialized
+            loop.run_until_complete(ensure_initialized())
+            
+            # Process the update
+            update = Update.de_json(request.get_json(force=True), application.bot)
+            loop.run_until_complete(application.process_update(update))
+            
+            loop.close()
+            return "", 200
+        except Exception as e:
+            logger.error(f"Error processing update: {e}", exc_info=True)
+            return "", 500
     return "Bot is running. Send POST requests to this URL.", 200
 
-@app_flask.route('/set_webhook')
-async def set_webhook():
-    """Sets the Telegram Webhook URL."""
-    # This route is optional but useful for verifying setup.
-    if not WEBHOOK_URL:
-        return "Error: WEBHOOK_URL not set. Check Render configuration.", 500
-        
-    s = await application.bot.set_webhook(url=WEBHOOK_URL)
-    if s:
-        return f"Webhook setup successful! URL: {WEBHOOK_URL}", 200
-    else:
-        return "Webhook setup failed.", 500
-
-# --- MAIN EXECUTION ---
-def main() -> None:
-    """Start the bot in Webhook mode."""
-    if actual_token == 'YOUR_BOT_TOKEN_HERE':
-        logger.error("FATAL ERROR: BOT_TOKEN is not configured.")
-        return
-
-    # Register handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("audio", audio_handler))
-    application.add_handler(CommandHandler("video", video_handler))
-
-    # Handles all other text messages as unknown
-    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
-
-    logger.info("Bot configured for Webhook mode. Starting Gunicorn server...")
-
-# Initialize the application when the module is loaded
-async def init_app():
-    """Initialize the Telegram application."""
-    await application.initialize()
-    await application.start()
-
-# Run initialization
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-loop.run_until_complete(init_app())
-
 if __name__ == '__main__':
-    main()
-    # Gunicorn (from Dockerfile) will run the Flask app via the CMD command.
-    # For local testing, you would typically run app_flask.run(...) here.
+    logger.info("Bot configured for Webhook mode. Starting server...")
