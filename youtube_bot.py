@@ -57,6 +57,10 @@ def download_youtube_media(url: str, format_spec: str) -> str | None:
         "--output", output_template,
         "-f", format_spec,
         "--print", "filepath",
+        # Add these flags to bypass YouTube's bot detection
+        "--extractor-args", "youtube:player_client=android",
+        "--no-check-certificate",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         url
     ]
     
@@ -64,7 +68,7 @@ def download_youtube_media(url: str, format_spec: str) -> str | None:
         os.makedirs("downloads", exist_ok=True)
         logger.info(f"Starting download for URL: {url} with format: {format_spec}")
         
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
         downloaded_filepath = result.stdout.strip().split('\n')[-1]
         
         if os.path.exists(downloaded_filepath):
@@ -77,6 +81,9 @@ def download_youtube_media(url: str, format_spec: str) -> str | None:
                 return max(files, key=os.path.getmtime)
             return None
         
+    except subprocess.TimeoutExpired:
+        logger.error(f"yt-dlp timed out after 120 seconds")
+        return None
     except subprocess.CalledProcessError as e:
         logger.error(f"yt-dlp failed. STDERR: {e.stderr}")
         return None
@@ -209,6 +216,15 @@ def webhook_handler():
             logger.error(f"Error processing update: {e}", exc_info=True)
             return "", 500
     return "Bot is running. Send POST requests to this URL.", 200
+
+@app_flask.route("/test_ytdlp")
+def test_ytdlp():
+    """Test if yt-dlp is working."""
+    try:
+        result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True)
+        return f"yt-dlp version: {result.stdout}", 200
+    except Exception as e:
+        return f"yt-dlp not found: {e}", 500
 
 if __name__ == '__main__':
     logger.info("Bot configured for Webhook mode. Starting server...")
