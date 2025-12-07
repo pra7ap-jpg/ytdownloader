@@ -1,6 +1,6 @@
 python-telegram-bot
 Flask[async]
 yt-dlp
-uvicorn
+gunicorn
 aiohttp
 asgiref
