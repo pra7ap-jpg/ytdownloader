@@ -20,5 +20,5 @@ COPY youtube_bot.py .
 # Expose the port the app will run on (Render sets the PORT environment variable)
 EXPOSE 8080
 
-# Command to run the application using Uvicorn (ASGI server for async Flask)
-CMD exec uvicorn youtube_bot:app_flask --host 0.0.0.0 --port $PORT
+# Command to run the application using Gunicorn with gevent workers for async support
+CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --worker-class gevent --worker-connections 1000 youtube_bot:app_flask
